@@ -129,10 +129,10 @@ func Test_CompleteUserAuth(t *testing.T) {
 	a := assert.New(t)
 
 	res := httptest.NewRecorder()
-	req, err := http.NewRequest("GET", "/auth/callback?provider=faux", nil)
+	req, err := http.NewRequest("GET", "/auth/callback?provider=faux&state=test_state", nil)
 	a.NoError(err)
 
-	sess := faux.Session{Name: "Homer Simpson", Email: "homer@example.com"}
+	sess := faux.Session{Name: "Homer Simpson", Email: "homer@example.com", AuthURL: "http://example.com/auth?state=test_state"}
 	session, _ := Store.Get(req, SessionName)
 	session.Values["faux"] = gzipString(sess.Marshal())
 	err = session.Save(req, res)
@@ -150,10 +150,10 @@ func Test_CompleteUserAuthWithSessionDeducedProvider(t *testing.T) {
 
 	res := httptest.NewRecorder()
 	// Intentionally omit a provider argument, force looking in session.
-	req, err := http.NewRequest("GET", "/auth/callback", nil)
+	req, err := http.NewRequest("GET", "/auth/callback?state=test_state", nil)
 	a.NoError(err)
 
-	sess := faux.Session{Name: "Homer Simpson", Email: "homer@example.com"}
+	sess := faux.Session{Name: "Homer Simpson", Email: "homer@example.com", AuthURL: "http://example.com/auth?state=test_state"}
 	session, _ := Store.Get(req, SessionName)
 	session.Values["faux"] = gzipString(sess.Marshal())
 	err = session.Save(req, res)
@@ -170,12 +170,12 @@ func Test_CompleteUserAuthWithContextParamProvider(t *testing.T) {
 	a := assert.New(t)
 
 	res := httptest.NewRecorder()
-	req, err := http.NewRequest("GET", "/auth/callback", nil)
+	req, err := http.NewRequest("GET", "/auth/callback?state=test_state", nil)
 	a.NoError(err)
 
 	req = GetContextWithProvider(req, "faux")
 
-	sess := faux.Session{Name: "Homer Simpson", Email: "homer@example.com"}
+	sess := faux.Session{Name: "Homer Simpson", Email: "homer@example.com", AuthURL: "http://example.com/auth?state=test_state"}
 	session, _ := Store.Get(req, SessionName)
 	session.Values["faux"] = gzipString(sess.Marshal())
 	err = session.Save(req, res)
@@ -192,10 +192,10 @@ func Test_Logout(t *testing.T) {
 	a := assert.New(t)
 
 	res := httptest.NewRecorder()
-	req, err := http.NewRequest("GET", "/auth/callback?provider=faux", nil)
+	req, err := http.NewRequest("GET", "/auth/callback?provider=faux&state=test_state", nil)
 	a.NoError(err)
 
-	sess := faux.Session{Name: "Homer Simpson", Email: "homer@example.com"}
+	sess := faux.Session{Name: "Homer Simpson", Email: "homer@example.com", AuthURL: "http://example.com/auth?state=test_state"}
 	session, _ := Store.Get(req, SessionName)
 	session.Values["faux"] = gzipString(sess.Marshal())
 	err = session.Save(req, res)
@@ -249,6 +249,137 @@ func Test_StateValidation(t *testing.T) {
 	session.Save(req, res)
 	_, err = CompleteUserAuth(res, req)
 	a.Error(err)
+}
+
+// Test_StateValidation_MissingStateRejected asserts that a callback request
+// without any state parameter is rejected instead of silently completing the
+// login. The error must be returned through the normal error path of
+// CompleteUserAuth, not swallowed.
+func Test_StateValidation_MissingStateRejected(t *testing.T) {
+	a := assert.New(t)
+
+	Store = NewProviderStore()
+	res := httptest.NewRecorder()
+	req, err := http.NewRequest("GET", "/auth?provider=faux&state=state_REAL", nil)
+	a.NoError(err)
+
+	BeginAuthHandler(res, req)
+	session, _ := Store.Get(req, SessionName)
+
+	// Callback request with the state parameter omitted entirely.
+	req, _ = http.NewRequest("GET", "/auth/callback?provider=faux", nil)
+	session.Save(req, res)
+	_, err = CompleteUserAuth(res, req)
+	a.Error(err)
+	a.Contains(err.Error(), "state")
+}
+
+// Test_StateValidation_EmptyStateRejected asserts that a callback request
+// carrying an empty state parameter is rejected with the same strict posture
+// as a request where the parameter is missing altogether.
+func Test_StateValidation_EmptyStateRejected(t *testing.T) {
+	a := assert.New(t)
+
+	Store = NewProviderStore()
+	res := httptest.NewRecorder()
+	req, err := http.NewRequest("GET", "/auth?provider=faux&state=state_REAL", nil)
+	a.NoError(err)
+
+	BeginAuthHandler(res, req)
+	session, _ := Store.Get(req, SessionName)
+
+	// Callback request with an explicitly empty state parameter.
+	req, _ = http.NewRequest("GET", "/auth/callback?provider=faux&state=", nil)
+	session.Save(req, res)
+	_, err = CompleteUserAuth(res, req)
+	a.Error(err)
+	a.Contains(err.Error(), "state")
+}
+
+// Test_StateValidation_ValidStatePasses asserts that the normal login flow is
+// unchanged: a callback whose state matches the one established during
+// BeginAuth completes authentication successfully.
+func Test_StateValidation_ValidStatePasses(t *testing.T) {
+	a := assert.New(t)
+
+	Store = NewProviderStore()
+	res := httptest.NewRecorder()
+	req, err := http.NewRequest("GET", "/auth?provider=faux&state=state_REAL", nil)
+	a.NoError(err)
+
+	BeginAuthHandler(res, req)
+	session, _ := Store.Get(req, SessionName)
+
+	req, _ = http.NewRequest("GET", "/auth/callback?provider=faux&state=state_REAL", nil)
+	session.Save(req, res)
+	user, err := CompleteUserAuth(res, req)
+	a.NoError(err)
+	a.NotEmpty(user)
+}
+
+// Test_StateValidation_MissingStateInSessionRejected covers the legacy form
+// where a session value is loaded directly without going through BeginAuth:
+// such a session carries no state, so the callback must be refused rather than
+// having the comparison silently skipped.
+func Test_StateValidation_MissingStateInSessionRejected(t *testing.T) {
+	a := assert.New(t)
+
+	Store = NewProviderStore()
+	res := httptest.NewRecorder()
+	req, err := http.NewRequest("GET", "/auth/callback?provider=faux&state=state_REAL", nil)
+	a.NoError(err)
+
+	// Directly load a session that never went through BeginAuth, so it has
+	// no state in its AuthURL.
+	sess := faux.Session{Name: "Homer Simpson", Email: "homer@example.com", AuthURL: "http://example.com/auth"}
+	session, _ := Store.Get(req, SessionName)
+	session.Values["faux"] = gzipString(sess.Marshal())
+	a.NoError(session.Save(req, res))
+
+	_, err = CompleteUserAuth(res, req)
+	a.Error(err)
+	a.Contains(err.Error(), "state")
+}
+
+// Test_StateValidation_ProviderIsolation asserts that state tokens are scoped
+// to the provider that issued them: a state established during one provider's
+// BeginAuth must never be accepted on another provider's callback. Each
+// provider stores its session under its own key, so the comparison always runs
+// against the issuing provider's AuthURL and can never cross-recognize a
+// foreign state.
+func Test_StateValidation_ProviderIsolation(t *testing.T) {
+	a := assert.New(t)
+
+	Store = NewProviderStore()
+	res := httptest.NewRecorder()
+
+	// Begin auth with faux, establishing state_REAL inside the faux session.
+	reqFaux, err := http.NewRequest("GET", "/auth?provider=faux&state=state_REAL", nil)
+	a.NoError(err)
+	BeginAuthHandler(res, reqFaux)
+	fauxSession, _ := Store.Get(reqFaux, SessionName)
+
+	// A second provider's session holds a different state. The callback
+	// targets faux but reuses the other provider's state value, which must not
+	// be cross-recognized: validation reads state solely from the faux session.
+	req, err := http.NewRequest("GET", "/auth/callback?provider=faux&state=state_OTHER", nil)
+	a.NoError(err)
+	session, _ := Store.New(req, SessionName)
+	session.Values["faux"] = fauxSession.Values["faux"]
+	a.NoError(session.Save(req, res))
+
+	_, err = CompleteUserAuth(res, req)
+	a.Error(err)
+	a.Equal("state token mismatch", err.Error())
+
+	// Conversely, the original provider's own state still passes, proving the
+	// rejection came from the scope boundary rather than a broken session.
+	req, _ = http.NewRequest("GET", "/auth/callback?provider=faux&state=state_REAL", nil)
+	session, _ = Store.New(req, SessionName)
+	session.Values["faux"] = fauxSession.Values["faux"]
+	a.NoError(session.Save(req, res))
+	_, err = CompleteUserAuth(res, req)
+	a.NoError(err)
 }
 
 func Test_AppleStateValidation(t *testing.T) {

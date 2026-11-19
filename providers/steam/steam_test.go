@@ -1,6 +1,7 @@
 package steam_test
 
 import (
+	"net/url"
 	"os"
 	"testing"
 
@@ -33,6 +34,11 @@ func Test_BeginAuth(t *testing.T) {
 	a.NoError(err)
 	a.Contains(s.AuthURL, "steamcommunity.com/openid/login")
 	a.Contains(s.AuthURL, "foo")
+	// The state must be carried on the authentication URL so that gothic's
+	// callback validation has a value to compare against.
+	parsed, err := url.Parse(s.AuthURL)
+	a.NoError(err)
+	a.Equal("test_state", parsed.Query().Get("state"))
 }
 
 func Test_SessionFromJSON(t *testing.T) {

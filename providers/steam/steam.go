@@ -61,8 +61,12 @@ func (p *Provider) Client() *http.Client {
 func (p *Provider) Debug(debug bool) {}
 
 // BeginAuth will return the authentication end-point for Steam.
+//
+// The state parameter is appended to the authentication URL so that gothic's
+// callback validation can compare it against the state echoed back by the
+// OpenID response.
 func (p *Provider) BeginAuth(state string) (goth.Session, error) {
-	u, err := p.getAuthURL()
+	u, err := p.getAuthURL(state)
 	s := &Session{
 		AuthURL:     u.String(),
 		CallbackURL: p.CallbackURL,
@@ -72,7 +76,7 @@ func (p *Provider) BeginAuth(state string) (goth.Session, error) {
 
 // getAuthURL is an internal function to build the correct
 // authentication url to redirect the user to Steam.
-func (p *Provider) getAuthURL() (*url.URL, error) {
+func (p *Provider) getAuthURL(state string) (*url.URL, error) {
 	callbackURL, err := url.Parse(p.CallbackURL)
 	if err != nil {
 		return nil, err
@@ -85,6 +89,7 @@ func (p *Provider) getAuthURL() (*url.URL, error) {
 		"openid.ns":         openIDNs,
 		"openid.realm":      fmt.Sprintf("%s://%s", callbackURL.Scheme, callbackURL.Host),
 		"openid.return_to":  callbackURL.String(),
+		"state":             state,
 	}
 
 	u, err := url.Parse(apiLoginEndpoint)

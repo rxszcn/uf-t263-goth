@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"testing"
 
@@ -45,6 +46,13 @@ func Test_BeginAuth(t *testing.T) {
 	a.Contains(s.AuthURL, "Authorize")
 	a.Equal("TOKEN", s.RequestToken.Token)
 	a.Equal("SECRET", s.RequestToken.Secret)
+	// The state must be carried on the authorization URL even though Xero's
+	// OAuth 1.0 flow has no native state parameter, so that gothic's callback
+	// validation has a value to compare against.
+	parsed, err := url.Parse(s.AuthURL)
+	a.NoError(err)
+	a.Equal("state", parsed.Query().Get("state"))
+	a.Equal("TOKEN", parsed.Query().Get("oauth_token"))
 }
 
 func Test_FetchUser(t *testing.T) {

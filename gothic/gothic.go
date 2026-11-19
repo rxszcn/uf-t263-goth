@@ -216,6 +216,14 @@ var CompleteUserAuth = func(res http.ResponseWriter, req *http.Request) (goth.Us
 
 // validateState ensures that the state token param from the original
 // AuthURL matches the one included in the current (callback) request.
+//
+// A state token is mandatory on both sides of the exchange: the session
+// produced by BeginAuth must carry the state sent to the provider, and the
+// callback request must echo the same state. Missing or empty state is
+// rejected instead of silently skipping the comparison, so a callback that
+// drops state can never complete authentication. The comparison is scoped
+// to the single provider's session, therefore state tokens issued for one
+// provider are never accepted by another provider's callback.
 func validateState(req *http.Request, sess goth.Session) error {
 	rawAuthURL, err := sess.GetAuthURL()
 	if err != nil {
@@ -230,7 +238,19 @@ func validateState(req *http.Request, sess goth.Session) error {
 	reqState := GetState(req)
 
 	originalState := authURL.Query().Get("state")
-	if originalState != "" && (originalState != reqState) {
+	if originalState == "" {
+		// The session holds no state, which means the BeginAuth flow did not
+		// establish a CSRF token for this provider. Refuse rather than let the
+		// comparison be bypassed.
+		return errors.New("state token is missing in the authorization session")
+	}
+	if reqState == "" {
+		// The callback request carries no state parameter at all, or an empty
+		// one. Both shapes are treated identically: the state cannot be verified,
+		// so the request is rejected.
+		return errors.New("state token is missing from the callback request")
+	}
+	if originalState != reqState {
 		return errors.New("state token mismatch")
 	}
 	return nil

@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -114,17 +115,33 @@ func (p *Provider) Debug(debug bool) {
 }
 
 // BeginAuth asks Xero for an authentication end-point and a request token for a session.
-// Xero does not support the "state" variable.
+//
+// Although Xero's OAuth 1.0 flow has no native state parameter, the state is
+// appended to the authorization URL query string so that Xero echoes it back
+// on the callback, allowing gothic's CSRF state validation to run.
 func (p *Provider) BeginAuth(state string) (goth.Session, error) {
 	requestToken, url, err := p.consumer.GetRequestTokenAndUrl(p.CallbackURL)
 	if err != nil {
 		return nil, err
 	}
 	session := &Session{
-		AuthURL:      url,
+		AuthURL:      withState(url, state),
 		RequestToken: requestToken,
 	}
 	return session, err
+}
+
+// withState appends the given state as a query parameter to the authorization
+// URL without discarding any parameters already present.
+func withState(authURL, state string) string {
+	parsed, err := url.Parse(authURL)
+	if err != nil {
+		return authURL
+	}
+	query := parsed.Query()
+	query.Set("state", state)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 // FetchUser will go to Xero and access basic information about the user.
